@@ -5,30 +5,38 @@ import {
   Component,
   Input,
   input,
-  instantiate,
   KeyCode,
   Node,
   Prefab,
   Vec3,
 } from "cc";
 import { Cube } from "./Cube";
+import { PoolManager } from "./PoolingSystem/PoolManager";
+import { IPoolObject } from "./PoolingSystem/IPoolObject";
+import { PoolObject } from "./PoolingSystem/PoolObject";
+import { GameTheme } from "./GameTheme";
 const { ccclass, property } = _decorator;
+
+enum GameState {
+  Wait,
+  Playing,
+}
 
 @ccclass("GameManager")
 export class GameManager extends Component {
   @property({ type: CCFloat, visible: true })
-  private _startY: number = 0;
+  private _startY: number = 2.1;
   @property({ type: CCFloat, visible: true })
-  private _yStep: number = 1;
+  private _yStep: number = 0.2;
 
   @property({ type: CCFloat, visible: true })
-  private _startX: number = -1;
+  private _startX: number = -0.5;
   @property({ type: CCFloat, visible: true })
-  private _endX: number = 1;
+  private _endX: number = 0.5;
   @property({ type: CCFloat, visible: true })
-  private _startZ: number = -1;
+  private _startZ: number = -0.5;
   @property({ type: CCFloat, visible: true })
-  private _endZ: number = 1;
+  private _endZ: number = 0.5;
 
   @property({ type: Node, visible: true })
   private _startPointLeft: Node = null;
@@ -53,10 +61,17 @@ export class GameManager extends Component {
 
   private _camOriginY: number = 0;
 
+  private _gameState: GameState = GameState.Wait;
+
+  private _score: number = 0;
+
+  private _cubeQueue: Cube[] = [];
+  private _maxQueueSize: number = 15;
+
   protected onLoad(): void {
     input.on(Input.EventType.KEY_DOWN, this.onKeyDown, this);
     // input.on(Input.EventType.KEY_UP, this.onKeyUp, this);
-    this._camOriginY = this._mainCam.position.y;
+    this._camOriginY = this._mainCam.worldPosition.y;
   }
 
   public onKeyDown(event: { keyCode: any }) {
@@ -68,7 +83,7 @@ export class GameManager extends Component {
   //   }
 
   protected start(): void {
-    this.spawnNewCube();
+    this.retry();
   }
 
   protected update(dt: number): void {
@@ -82,55 +97,134 @@ export class GameManager extends Component {
       touch = true;
       this._pressedKeys.delete(KeyCode.SPACE);
     }
-    this.handleStopCube(touch);
+    this.handleTouchAction(touch);
   }
 
   protected handleCamPosition(dt: number) {
-    let newPos: Vec3 = this._mainCam.position;
+    let newPos: Vec3 = this._mainCam.worldPosition;
     newPos.y = Math.min(
-      this._mainCam.position.y + dt,
-      this._camOriginY + this.node.position.y
+      this._mainCam.worldPosition.y + dt,
+      this._camOriginY + this.node.worldPosition.y
     );
-    this._mainCam.position = newPos;
+    this._mainCam.worldPosition = newPos;
   }
 
-  protected handleStopCube(touch: boolean) {
+  protected handleTouchAction(touch: boolean) {
     if (!touch) return;
 
-    this._currentCube.StopCube(
+    // cache current cube x and z location
+    let cubeStartX = this._currentCube.startX;
+    let cubeStartZ = this._currentCube.startZ;
+    let cubeEndX = this._currentCube.endX;
+    let cubeEndZ = this._currentCube.endZ;
+
+    if (
+      this._startX > cubeEndX ||
+      this._endX < cubeStartX ||
+      this._startZ > cubeEndZ ||
+      this._endZ < cubeStartZ
+    ) {
+      // If no overlap, game over!
+      this.loseGame();
+      this._currentCube.fallDownThisCube();
+      return;
+    }
+
+    // stop the cube
+    this._currentCube.stopCube(
       this._startX,
       this._endX,
       this._startZ,
       this._endZ
     );
 
-    this._endX =
-      this._currentCube.node.worldPosition.x +
-      this._currentCube.node.scale.x / 2;
-    this._startX = -this._endX;
-    this._endZ =
-      this._currentCube.node.worldPosition.z +
-      this._currentCube.node.scale.z / 2;
-    this._startZ = -this._endZ;
+    this._startX = this._currentCube.startX;
+    this._endX = this._currentCube.endX;
+    this._startZ = this._currentCube.startZ;
+    this._endZ = this._currentCube.endZ;
 
-    this.node.position = new Vec3(
-      this.node.position.x,
-      this.node.position.y + this._yStep,
-      this.node.position.z
+    // increase y view
+    this.node.worldPosition = new Vec3(
+      this.node.worldPosition.x,
+      this.node.worldPosition.y + this._yStep,
+      this.node.worldPosition.z
     );
+
+    // change spawn location
     this._spawnAtLeft = !this._spawnAtLeft;
+    // spawn new cube
+    this.spawnNewCube();
+
+    // increase score
+    this._score++;
+
+    // change game theme
+    GameTheme.changeTheme();
+  }
+
+  public loseGame(): void {
+    this._gameState = GameState.Wait;
+  }
+
+  public retry(): void {
+    this._gameState = GameState.Playing;
+    this._score = 0;
+
+    this.clearAllCube();
+
+    // reset y position
+    let nodePos: Vec3 = this.node.worldPosition;
+    nodePos.y = 0;
+    this.node.worldPosition = nodePos;
+    let camPos: Vec3 = this._mainCam.worldPosition;
+    camPos.y = this._camOriginY;
+    this._mainCam.worldPosition = camPos;
+
     this.spawnNewCube();
   }
 
   protected spawnNewCube() {
-    var go = instantiate(this._cubePrefab);
-    go.setWorldPosition(
-      this._spawnAtLeft
-        ? this._startPointLeft.worldPosition
-        : this._startPointRight.worldPosition
+    const fallCubePO = PoolManager.get<IPoolObject>(this._cubePrefab);
+
+    let targetPosition: Vec3 = new Vec3();
+
+    if (this._spawnAtLeft) {
+      targetPosition.x = this._startPointLeft.worldPosition.x;
+      targetPosition.y = this._startPointLeft.worldPosition.y;
+      targetPosition.z = this._startZ + (this._endZ - this._startZ) / 2;
+    } else {
+      targetPosition.x = this._startX + (this._endX - this._startX) / 2;
+      targetPosition.y = this._startPointRight.worldPosition.y;
+      targetPosition.z = this._startPointRight.worldPosition.z;
+    }
+    fallCubePO.node.setWorldPosition(targetPosition);
+
+    fallCubePO.node.scale = new Vec3(
+      this._endX - this._startX,
+      fallCubePO.node.scale.y,
+      this._endZ - this._startZ
     );
-    this._currentCube = go.getComponent(Cube);
+
+    this._currentCube = fallCubePO.node.getComponent(Cube);
+    this._currentCube.initialize(false, true);
     this._currentCube.followZ = this._spawnAtLeft ? false : true;
-    go.setParent(this._cubeContainer);
+    fallCubePO.node.setParent(this._cubeContainer);
+
+    this.pushCubeToQueue(this._currentCube);
+  }
+
+  private pushCubeToQueue(cube: Cube): void {
+    if (this._cubeQueue.length == this._maxQueueSize) {
+      let cubeToShift: Cube = this._cubeQueue.shift();
+      cubeToShift.getComponent(PoolObject).returnToPool();
+    }
+
+    this._cubeQueue.push(cube);
+  }
+
+  private clearAllCube(): void {
+    this._cubeQueue.forEach((cube) => {
+      cube.getComponent(PoolObject).returnToPool();
+    });
   }
 }
