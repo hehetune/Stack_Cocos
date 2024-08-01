@@ -5,5 +5,12 @@
       "width": 1200,
       "height": 1600
     }
-  }
+  },
+  "custom_joint_texture_layouts": [],
+  "layer": [
+    {
+      "name": "Background",
+      "value": 1
+    }
+  ]
 }

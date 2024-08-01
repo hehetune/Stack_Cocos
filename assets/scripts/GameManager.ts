@@ -2,10 +2,14 @@ import {
   _decorator,
   CCBoolean,
   CCFloat,
+  Color,
   Component,
+  DynamicAtlasManager,
   Input,
   input,
   KeyCode,
+  Material,
+  MeshRenderer,
   Node,
   Prefab,
   Vec3,
@@ -15,6 +19,7 @@ import { PoolManager } from "./PoolingSystem/PoolManager";
 import { IPoolObject } from "./PoolingSystem/IPoolObject";
 import { PoolObject } from "./PoolingSystem/PoolObject";
 import { GameTheme } from "./GameTheme";
+import { UIManager } from "./UIManager";
 const { ccclass, property } = _decorator;
 
 enum GameState {
@@ -57,6 +62,10 @@ export class GameManager extends Component {
   @property({ type: Node, visible: true })
   private _mainCam: Node = null;
 
+  @property({ type: Node, visible: true })
+  private _baseCube: Node = null;
+  private _baseCubeMat: Material = null;
+
   private _pressedKeys: Set<number> = new Set();
 
   private _camOriginY: number = 0;
@@ -68,10 +77,15 @@ export class GameManager extends Component {
   private _cubeQueue: Cube[] = [];
   private _maxQueueSize: number = 15;
 
+  @property({ type: UIManager, visible: true })
+  private _uiManager: UIManager = null;
+
   protected onLoad(): void {
     input.on(Input.EventType.KEY_DOWN, this.onKeyDown, this);
     // input.on(Input.EventType.KEY_UP, this.onKeyUp, this);
     this._camOriginY = this._mainCam.worldPosition.y;
+
+    DynamicAtlasManager.instance.enabled = false;
   }
 
   public onKeyDown(event: { keyCode: any }) {
@@ -83,7 +97,15 @@ export class GameManager extends Component {
   //   }
 
   protected start(): void {
-    this.retry();
+    const meshRenderer = this._baseCube.getComponent(MeshRenderer);
+    if (meshRenderer) {
+      this._baseCubeMat = new Material();
+      this._baseCubeMat.initialize({ effectName: "builtin-standard" });
+
+      this._baseCubeMat.setProperty("albedo", GameTheme.getTheme(-1));
+
+      meshRenderer.material = this._baseCubeMat;
+    }
   }
 
   protected update(dt: number): void {
@@ -110,6 +132,7 @@ export class GameManager extends Component {
   }
 
   protected handleTouchAction(touch: boolean) {
+    if (this._gameState != GameState.Playing) return;
     if (!touch) return;
 
     // cache current cube x and z location
@@ -118,15 +141,19 @@ export class GameManager extends Component {
     let cubeEndX = this._currentCube.endX;
     let cubeEndZ = this._currentCube.endZ;
 
-    if (
-      this._startX > cubeEndX ||
-      this._endX < cubeStartX ||
-      this._startZ > cubeEndZ ||
-      this._endZ < cubeStartZ
-    ) {
+    if (this._startX > cubeEndX || this._startZ > cubeEndZ) {
       // If no overlap, game over!
       this.loseGame();
-      this._currentCube.fallDownThisCube();
+      this._currentCube.fallDownThisCube(false);
+      this._cubeQueue.pop();
+      this._currentCube = null;
+      return;
+    }
+    if (this._endX < cubeStartX || this._endZ < cubeStartZ) {
+      this.loseGame();
+      this._currentCube.fallDownThisCube(true);
+      this._cubeQueue.pop();
+      this._currentCube = null;
       return;
     }
 
@@ -150,6 +177,8 @@ export class GameManager extends Component {
       this.node.worldPosition.z
     );
 
+    GameTheme.changeTheme();
+
     // change spawn location
     this._spawnAtLeft = !this._spawnAtLeft;
     // spawn new cube
@@ -159,16 +188,29 @@ export class GameManager extends Component {
     this._score++;
 
     // change game theme
-    GameTheme.changeTheme();
+    this._uiManager.updateGameTheme();
   }
 
   public loseGame(): void {
     this._gameState = GameState.Wait;
+    this._uiManager.showLoseUI();
+  }
+
+  public startGame(): void {
+    this._gameState = GameState.Playing;
+    this._score = 0;
+
+    this.spawnNewCube();
   }
 
   public retry(): void {
     this._gameState = GameState.Playing;
     this._score = 0;
+
+    this._startX = -0.5;
+    this._endX = 0.5;
+    this._startZ = -0.5;
+    this._endZ = 0.5;
 
     this.clearAllCube();
 
@@ -179,6 +221,8 @@ export class GameManager extends Component {
     let camPos: Vec3 = this._mainCam.worldPosition;
     camPos.y = this._camOriginY;
     this._mainCam.worldPosition = camPos;
+
+    this._baseCubeMat.setProperty("albedo", GameTheme.getTheme(-1));
 
     this.spawnNewCube();
   }
@@ -214,7 +258,7 @@ export class GameManager extends Component {
   }
 
   private pushCubeToQueue(cube: Cube): void {
-    if (this._cubeQueue.length == this._maxQueueSize) {
+    while (this._cubeQueue.length >= this._maxQueueSize) {
       let cubeToShift: Cube = this._cubeQueue.shift();
       cubeToShift.getComponent(PoolObject).returnToPool();
     }
@@ -226,5 +270,7 @@ export class GameManager extends Component {
     this._cubeQueue.forEach((cube) => {
       cube.getComponent(PoolObject).returnToPool();
     });
+
+    this._cubeQueue = []
   }
 }

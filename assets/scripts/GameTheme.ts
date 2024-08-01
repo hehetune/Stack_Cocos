@@ -4,10 +4,10 @@ import { getRandomInt } from "./Utils";
 
 export class GameTheme {
   private static H: number = 0;
-  private static S: number = 45;
+  private static S: number = 62;
   private static L: number = 62;
 
-  private static maxColor: number = 5;
+  private static maxColor: number = 21;
   private static hStep: number = 20;
 
   private static themes: Color[] = [];
@@ -20,7 +20,8 @@ export class GameTheme {
 
   public static getTheme(index: number) {
     let highestIndex = Math.floor(this.maxColor / 2);
-    index = Math.min(Math.max(index, -highestIndex), highestIndex);
+    index += highestIndex;
+    index = Math.min(Math.max(0, index), this.maxColor - 1);
 
     return this.getThemes()[index];
   }

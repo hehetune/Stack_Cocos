@@ -16,6 +16,7 @@ import { FIXED_DELTA_TIME } from "./Constant";
 import { PoolManager } from "./PoolingSystem/PoolManager";
 import { IPoolObject } from "./PoolingSystem/IPoolObject";
 import { GameTheme } from "./GameTheme";
+import { PoolObject } from "./PoolingSystem/PoolObject";
 const { ccclass, property } = _decorator;
 
 @ccclass("Cube")
@@ -202,12 +203,14 @@ export class Cube extends Component {
     );
   }
 
-  public fallDownThisCube(): void {
+  public fallDownThisCube(forward: boolean): void {
     this._canMove = false;
     const fallDirection = this.followZ
-      ? new Vec3(0, 0, this._isMovingForward ? 1 : -1)
-      : new Vec3(this._isMovingForward ? 1 : -1, 0, 0);
+      ? new Vec3(0, 0, forward ? 1 : -1)
+      : new Vec3(forward ? 1 : -1, 0, 0);
     this.applyFalldownEffect(this._rb, fallDirection);
+
+    this.getComponent(PoolObject).returnToPoolByLifeTime(5);
   }
 
   private applyFalldownEffect(rigidbody: RigidBody, fallDirection: Vec3): void {
